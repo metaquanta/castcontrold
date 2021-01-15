@@ -47,32 +47,38 @@ export namespace MediaStatusMessage {
     supportedMediaCommands: number;
     volume: { level: number; muted: boolean };
     activeTrackIds: [];
-    media?: {};
-    currentItemId: number;
-    items: {
+    media: Media;
+    currentItemId?: number;
+    items?: {
       itemId: number;
       media: Media;
       autoplay: boolean;
       customData: {};
       orderId: number;
     }[];
+    customData?: {};
   };
 
   export type Media = {
     contentId: string;
-    streamType: string;
+    streamType?: string;
     contentType: string;
-    metadata: {};
-    duration: number;
-    tracks: {
+    metadata?: {
+      metadataType: number;
+      title: string;
+      subtitle: string;
+      images: { url: string }[];
+    };
+    duration?: number;
+    tracks?: {
       trackId: number;
       trackContentType: string;
       type: string;
       language: string;
       roles: [];
     }[];
-    breakClips: [];
-    breaks: [];
+    breakClips?: [];
+    breaks?: [];
   };
 }
 
