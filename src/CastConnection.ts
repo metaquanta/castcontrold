@@ -1,7 +1,5 @@
 import { Client } from "castv2";
-import { Message,ReceiverStatusMessage } from "./CastMessage";
-
-const mediaSender = "client-17558";
+import { Message } from "./CastMessage";
 
 export namespace CastConnection {
   export function open(address: string): Promise<CastConnection> {
@@ -24,7 +22,10 @@ export namespace CastConnection {
       type: string,
       data?: Record<string, unknown>
     ): Promise<Message>;
+    stream(): AsyncGenerator<Message>;
   };
+
+  export const mediaSender = "client-17558";
 }
 
 export type CastConnection = {
@@ -56,6 +57,10 @@ export type CastConnection = {
 class _CastConnection {
   private heartbeat: NodeJS.Timeout;
   private requestId: number = Math.floor(Math.random() * 10000);
+  private channels: Map<
+    string,
+    Map<string, Map<string, _CastChannel>>
+  > = new Map();
   constructor(private client: Client) {
     console.debug("CastConnection: connected");
     this.client.on("message", (src, dest, namespace, payload) =>
@@ -92,7 +97,7 @@ class _CastConnection {
 
   openMediaChannel(receiver: string): CastConnection.Channel {
     return this.openChannel(
-      mediaSender,
+      CastConnection.mediaSender,
       receiver,
       "urn:x-cast:com.google.cast.media"
     );
@@ -104,10 +109,19 @@ class _CastConnection {
     namespace: string,
     data: string
   ): void {
+    const json = JSON.parse(data);
     console.debug(
-      `[${dest}] ⟵ [${src}] (${namespace}): `,
-      JSON.stringify(JSON.parse(data), null, "  ")
+      `[${dest}] ⟵  [${src}] (${namespace}): `,
+      JSON.stringify(json, null, "  ")
     );
+    (dest === "*"
+      ? Array.from(this.channels.values()).map((v) =>
+          v.get(src)?.get(namespace)
+        )
+      : [this.channels.get(dest)?.get(src)?.get(namespace)]
+    )
+      .filter((v) => v !== undefined)
+      .forEach((channel) => channel?.consume(json));
   }
 
   send(
@@ -117,7 +131,8 @@ class _CastConnection {
     type: string,
     data: Record<string, unknown> = {}
   ): number {
-    console.debug(`[${src}] ⟶ [${dest}] (${namespace}): ${type}`, data);
+    if(type !== "PING")
+    console.debug(`[${src}] ⟶  [${dest}] (${namespace}): ${type}`, data);
     const requestId = this.newRequestId();
     this.client.send(
       src,
@@ -164,15 +179,30 @@ class _CastConnection {
   }
 
   openChannel(
-    sourceId: string,
-    destinationId: string,
+    sender: string,
+    receiver: string,
     namespace: string
   ): CastConnection.Channel {
-    return new _CastChannel(this, sourceId, destinationId, namespace);
+    console.debug(`openChannel("${sender}", "${receiver}", "${namespace}")`);
+    if (!this.channels.has(sender)) this.channels.set(sender, new Map());
+    if (!this.channels.get(sender)?.has(receiver))
+      this.channels.get(sender)?.set(receiver, new Map());
+    if (!this.channels.get(sender)?.get(receiver)?.has(namespace)) {
+      console.debug(`opening ["${sender}", "${receiver}", "${namespace}"]`);
+      this.channels
+        .get(sender)
+        ?.get(receiver)
+        ?.set(namespace, new _CastChannel(this, sender, receiver, namespace));
+    }
+    return this.channels
+      .get(sender)
+      ?.get(receiver)
+      ?.get(namespace) as CastConnection.Channel;
   }
 }
 
 class _CastChannel {
+  private next: LinkedPortal<Message> = new LinkedPortal();
   constructor(
     private bus: CastConnection,
     private source: string,
@@ -182,6 +212,19 @@ class _CastChannel {
 
   send(type: string, data: Record<string, unknown> = {}): number {
     return this.bus.send(this.source, this.dest, this.namespace, type, data);
+  }
+
+  async *stream(): AsyncGenerator<Message> {
+    let next = this.next;
+    let message;
+    while (true) {
+      [message, next] = await next.get();
+      yield message;
+    }
+  }
+
+  consume(message: Message): void {
+    this.next = this.next.set(message);
   }
 
   sendAndListen(
@@ -198,23 +241,21 @@ class _CastChannel {
   }
 }
 
-export async function listenToCast(): Promise<string> {
-  const conn = await CastConnection.open("192.168.31.102");
-  const tpChan = conn.openTpChannel();
-  tpChan.send("CONNECT");
-  const recChan = conn.openReceiverChannel();
-  const message = await recChan.sendAndListen("GET_STATUS");
-  if (ReceiverStatusMessage.is(message)) {
-    const status = message.status;
-    console.log("!!!", status.applications.length, status);
-    if (status.applications.length > 0) {
-      const transportId = status.applications[0].transportId;
-      const tpMedia = conn.openTpChannel(mediaSender, transportId);
-      tpMedia.send("CONNECT");
-      const media = conn.openMediaChannel(transportId);
-      const message = await media.sendAndListen("GET_STATUS");
-      return JSON.stringify(message);
-    }
+class LinkedPortal<T> {
+  promise: Promise<[T, LinkedPortal<T>]>;
+  resolve: ((s: [T, LinkedPortal<T>]) => void) | undefined;
+
+  constructor() {
+    this.promise = new Promise((resolve) => (this.resolve = resolve));
   }
-  return "";
+
+  async get(): Promise<[T, LinkedPortal<T>]> {
+    return await this.promise;
+  }
+
+  set(s: T): LinkedPortal<T> {
+    const next = new LinkedPortal<T>();
+    (this.resolve as (s: [T, LinkedPortal<T>]) => void)([s, next]);
+    return next;
+  }
 }
