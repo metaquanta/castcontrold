@@ -23,8 +23,8 @@ export type ReceiverStatusMessage = {
   requestId?: number;
   type: "RECEIVER_STATUS";
   status: {
-    applications: ReceiverStatusMessage.Application[];
-    userEq: {};
+    applications?: ReceiverStatusMessage.Application[];
+    //userEq: {};
     volume: {
       controlType: "attenuation";
       level: number;
@@ -42,27 +42,29 @@ export namespace MediaStatusMessage {
   export type Status = {
     mediaSessionId: string;
     playbackRate: number;
-    playerState: string;
-    currentTime: number;
+    playerState: "PAUSED" | "IDLE" | "BUFFERING" | "BUFFERED" | "PLAYING";
+    currentTime?: number;
     supportedMediaCommands: number;
     volume: { level: number; muted: boolean };
-    activeTrackIds: [];
-    media: Media;
+    activeTrackIds?: [];
+    media?: Media;
     currentItemId?: number;
     items?: {
       itemId: number;
       media: Media;
       autoplay: boolean;
-      customData: {};
+      //customData: {};
       orderId: number;
     }[];
-    customData?: {};
+    customData: { playerState?: number };
+    idleReason?: "FINISHED";
   };
 
   export type Media = {
     contentId: string;
-    streamType?: string;
+    streamType?: "BUFFERED";
     contentType: string;
+    customData?: { listId?: string; currentIndex?: number };
     metadata?: {
       metadataType: number;
       title: string;

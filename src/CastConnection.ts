@@ -1,4 +1,5 @@
 import { Client } from "castv2";
+import { EventEmitter } from "events";
 import { Message } from "./CastMessage";
 
 export namespace CastConnection {
@@ -22,7 +23,7 @@ export namespace CastConnection {
       type: string,
       data?: Record<string, unknown>
     ): Promise<Message>;
-    stream(): AsyncGenerator<Message>;
+    onMessage(f: (m: Message) => void): void;
   };
 
   export const mediaSender = "client-17558";
@@ -59,7 +60,7 @@ class _CastConnection {
   private requestId: number = Math.floor(Math.random() * 10000);
   private channels: Map<
     string,
-    Map<string, Map<string, _CastChannel>>
+    Map<string, Map<string, _Channel>>
   > = new Map();
   constructor(private client: Client) {
     console.debug("CastConnection: connected");
@@ -112,7 +113,8 @@ class _CastConnection {
     const json = JSON.parse(data);
     console.debug(
       `[${dest}] ⟵  [${src}] (${namespace}): `,
-      JSON.stringify(json, null, "  ")
+      json.type
+      //JSON.stringify(json, null, "  ")
     );
     (dest === "*"
       ? Array.from(this.channels.values()).map((v) =>
@@ -131,8 +133,8 @@ class _CastConnection {
     type: string,
     data: Record<string, unknown> = {}
   ): number {
-    if(type !== "PING")
-    console.debug(`[${src}] ⟶  [${dest}] (${namespace}): ${type}`, data);
+    if (type !== "PING")
+      console.debug(`[${src}] ⟶  [${dest}] (${namespace}): ${type}`, data.type);
     const requestId = this.newRequestId();
     this.client.send(
       src,
@@ -192,7 +194,7 @@ class _CastConnection {
       this.channels
         .get(sender)
         ?.get(receiver)
-        ?.set(namespace, new _CastChannel(this, sender, receiver, namespace));
+        ?.set(namespace, new _Channel(this, sender, receiver, namespace));
     }
     return this.channels
       .get(sender)
@@ -201,30 +203,26 @@ class _CastConnection {
   }
 }
 
-class _CastChannel {
-  private next: LinkedPortal<Message> = new LinkedPortal();
+class _Channel extends EventEmitter {
   constructor(
     private bus: CastConnection,
     private source: string,
     private dest: string,
     private namespace: string
-  ) {}
+  ) {
+    super();
+  }
 
   send(type: string, data: Record<string, unknown> = {}): number {
     return this.bus.send(this.source, this.dest, this.namespace, type, data);
   }
 
-  async *stream(): AsyncGenerator<Message> {
-    let next = this.next;
-    let message;
-    while (true) {
-      [message, next] = await next.get();
-      yield message;
-    }
+  consume(message: Message): void {
+    this.emit("message", message);
   }
 
-  consume(message: Message): void {
-    this.next = this.next.set(message);
+  onMessage(f: (m: Message) => void): void {
+    this.on("message", f);
   }
 
   sendAndListen(
@@ -238,24 +236,5 @@ class _CastChannel {
       type,
       data
     );
-  }
-}
-
-class LinkedPortal<T> {
-  promise: Promise<[T, LinkedPortal<T>]>;
-  resolve: ((s: [T, LinkedPortal<T>]) => void) | undefined;
-
-  constructor() {
-    this.promise = new Promise((resolve) => (this.resolve = resolve));
-  }
-
-  async get(): Promise<[T, LinkedPortal<T>]> {
-    return await this.promise;
-  }
-
-  set(s: T): LinkedPortal<T> {
-    const next = new LinkedPortal<T>();
-    (this.resolve as (s: [T, LinkedPortal<T>]) => void)([s, next]);
-    return next;
   }
 }
