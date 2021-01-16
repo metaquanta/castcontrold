@@ -22,11 +22,19 @@ export namespace CastController {
 
 class Link {
   receiver: Application | undefined;
+  transportId: string | undefined;
+  volume: number = 0;
+  volumeStep: number = 0;
+  muted: boolean = false;
   constructor(private connection: CastConnection) {
     this.connection.openTpChannel().send("CONNECT");
     const channel = this.connection.openReceiverChannel();
     channel.onMessage((m) => this.parseMessage(m));
     channel.send("GET_STATUS");
+  }
+
+  getVolume(): number {
+    return this.volume;
   }
 
   parseMessage(m: Message): void {
@@ -38,19 +46,52 @@ class Link {
       console.debug("Cast.parseMessage() - error", m);
       return;
     }
-    this.receiver = new Application(this.connection, m.status.applications[0]);
+    if (m.status.volume !== undefined) {
+      const vol = m.status.volume;
+      if (this.muted !== vol.muted) {
+        console.debug(`Link.muted: ${vol.muted}`);
+        this.muted = vol.muted;
+      }
+      if (this.volume != vol.level) {
+        console.debug(`Link.volume: ${vol.level}`);
+        this.volume = vol.level;
+      }
+      if (this.volumeStep !== vol.stepInterval) {
+        console.debug(`Link.volumeStep: ${vol.stepInterval}`);
+        this.volumeStep = vol.stepInterval;
+      }
+    }
+    const application = m.status.applications[0];
+    if (application.transportId === this.transportId) {
+      console.debug("Link: duplicate application");
+    } else if (
+      application.namespaces.findIndex(
+        (ns) => ns.name === CastConnection.mediaNs
+      ) >= 0
+    ) {
+      console.debug(`Link.transportId: ${application.transportId}`);
+      this.transportId = application.transportId;
+      if (this.receiver !== undefined) this.receiver.close();
+      this.receiver = new Application(
+        this.connection,
+        m.status.applications[0]
+      );
+    }
   }
 }
 
 class Application {
   media: Media | undefined;
-  //private channel: CastConnection.Channel;
+  status: string;
+  sessionId: string;
   constructor(
     private connection: CastConnection,
     message: ReceiverStatusMessage.Application
   ) {
     const receiver = message.transportId;
-    console.debug(`new Receiver("${receiver}")`);
+    this.status = message.statusText;
+    this.sessionId = message.sessionId;
+    console.debug(`new Application("${receiver}")`);
     this.connection
       .openTpChannel(CastConnection.mediaSender, receiver)
       .send("CONNECT");
@@ -61,15 +102,60 @@ class Application {
 
   parseMessage(m: Message): void {
     if (!MediaStatusMessage.is(m)) {
-      console.debug("Receiver.parseMessage() - error", m);
+      console.debug("Application.parseMessage() - error", m);
       return;
     }
-    this.media = new Media(m);
+    const newMedia = new Media(m.status[0]);
+    if (this.media === undefined) {
+      console.debug(`Application.media: ${newMedia}`);
+      this.media = newMedia;
+    } else if (this.media.sessionId === newMedia.sessionId) {
+      this.media.update(newMedia);
+    } else {
+      this.media.close();
+      console.debug(`Application.media: ${newMedia}`);
+      this.media = newMedia;
+    }
   }
+
+  close(): void {}
 }
+
 class Media {
-  constructor(m: MediaStatusMessage) {
+  sessionId: string | undefined;
+  state: string;
+  mediaTime: number;
+  mediaTimeAt: number;
+  media: MediaStatusMessage.Media | undefined;
+  constructor(m: MediaStatusMessage.Status) {
     console.debug(`new Media`, JSON.stringify(m, null, "  "));
+    this.media = m.media;
+    this.sessionId = m.mediaSessionId;
+    this.state = m.playerState;
+    this.mediaTime = m.currentTime ?? -1;
+    this.mediaTimeAt = Date.now() / 1000;
+  }
+
+  currentTime(): number {
+    return this.mediaTime > 0
+      ? this.mediaTime + Date.now() / 1000 - this.mediaTimeAt
+      : -1;
+  }
+
+  update(m: Media): void {
+    if (m.state !== this.state) {
+      console.debug(`Media.state: ${this.state} ⇒ ${m.state}`);
+      this.state = m.state;
+    }
+    if (m.mediaTime && this.mediaTime > -1) {
+      console.debug(`Media.mediaTime: ${this.currentTime()} ⇒ ${m.mediaTime}`);
+      this.mediaTime = m.mediaTime;
+      this.mediaTimeAt = Date.now();
+    }
+  }
+
+  close(): void {
+    console.debug(`Media.close() [${this.sessionId}]`);
   }
 }
 

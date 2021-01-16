@@ -27,6 +27,7 @@ export namespace CastConnection {
   };
 
   export const mediaSender = "client-17558";
+  export const mediaNs = "urn:x-cast:com.google.cast.media";
 }
 
 export type CastConnection = {
@@ -100,7 +101,7 @@ class _CastConnection {
     return this.openChannel(
       CastConnection.mediaSender,
       receiver,
-      "urn:x-cast:com.google.cast.media"
+      CastConnection.mediaNs
     );
   }
 
