@@ -4,8 +4,8 @@ import {
   ReceiverStatusMessage,
   MediaStatusMessage,
   Message
-} from "./CastMessage";
-import { CastConnection } from "./CastConnection";
+} from "./CastMessage.js";
+import { CastConnection } from "./CastConnection.js";
 
 export namespace CastController {
   export async function open(host: string): Promise<Link> {

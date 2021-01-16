@@ -1,6 +1,6 @@
 import { Client } from "castv2";
 import { EventEmitter } from "events";
-import { Message } from "./CastMessage";
+import { Message } from "./CastMessage.js";
 
 export namespace CastConnection {
   export function open(address: string): Promise<CastConnection> {
