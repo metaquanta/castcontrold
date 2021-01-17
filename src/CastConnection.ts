@@ -1,14 +1,15 @@
 import { Client } from "castv2";
 import { EventEmitter } from "events";
+import { c, debug, error, info } from "./debug.js";
 
 export namespace CastConnection {
   export function open(host: string, port: number): Promise<Link> {
-    console.debug(`CastConnection.open("${host}")`);
+    debug(`CastConnection.open("${host}")`);
     return new Promise((resolve, reject) => {
       const client = new Client();
-      client.on("error", (error: string) => {
-        console.error(`CastConnection.open() failed ${error}`);
-        reject(error);
+      client.on("error", (s: string) => {
+        error(`CastConnection.open() failed ${s}`);
+        reject(s);
       });
       client.connect({ host, port }, () => {
         resolve(new _Link(client));
@@ -38,6 +39,8 @@ class _Link {
   private heartbeat: NodeJS.Timeout;
   private requestId: number = 1;
   private channels: Map<string, Map<string, _Channel>> = new Map();
+  private _lastRequestId: number | undefined;
+  private _lastRequestAt: number | undefined;
   constructor(private client: Client) {
     this.client.on("message", (src, dest, namespace, payload) =>
       this.parseMessage(src, dest, namespace, payload)
@@ -50,7 +53,7 @@ class _Link {
         "PING"
       );
     }, 5000);
-    console.debug("link up.");
+    debug("link up.");
   }
 
   parseMessage(
@@ -60,8 +63,11 @@ class _Link {
     data: string
   ): void {
     const json = JSON.parse(data);
-    console.debug(`[${dest}] ⟵  [${src}] (${namespace} <${json.type}>)`);
-    //console.debug(JSON.stringify(json, null, "  "));
+    info(`[${c(dest)}] ⟵  [${c(src)}] (${c(namespace)} ${c(json.type)})`);
+
+    if (json.requestId === this._lastRequestId) {
+      debug(`⇆ ${(Date.now() - (this._lastRequestAt as number)).toFixed(1)}ms`);
+    }
     (dest === "*"
       ? Array.from(this.channels.get(src)?.values() ?? [])
       : [this.channels.get(src)?.get(dest)]
@@ -78,8 +84,10 @@ class _Link {
     data: Record<string, unknown> = {}
   ): number {
     if (type !== "PING")
-      console.debug(`[${src}] ⟶  [${dest}] (${namespace}) <${type}>`);
+      info(`[${c(src)}] ⟶  [${c(dest)}] (${c(namespace)} ${c(type)})`);
     const requestId = this.newRequestId();
+    this._lastRequestId = requestId;
+    this._lastRequestAt = Date.now();
     this.client.send(
       src,
       dest,
@@ -100,7 +108,7 @@ class _Link {
   openChannel(sender: string, receiver: string): CastConnection.Channel {
     if (!this.channels.has(receiver)) this.channels.set(receiver, new Map());
     if (!this.channels.get(receiver)?.has(sender)) {
-      console.debug(`[${sender}] ⟷  [${receiver}]`);
+      info(`[${c(sender)}] ⟷  [${c(receiver)}]`);
       this.channels
         .get(receiver)
         ?.set(sender, new _Channel(this, sender, receiver));

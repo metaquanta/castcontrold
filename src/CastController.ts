@@ -2,6 +2,7 @@
 
 import { ReceiverStatusMessage, MediaStatusMessage } from "./CastMessage.js";
 import { CastConnection } from "./CastConnection.js";
+import { c, debug, notice, info } from "./debug.js";
 
 export namespace CastController {
   export async function connect(
@@ -161,7 +162,9 @@ class MediaReceiver {
 
   seek(time: number): void {
     if (this.media) {
-      console.log(`seek(${time}, ${this.media.getMediaTime().toFixed(1)})`);
+      debug(
+        `seek ${this.media.getMediaTime().toFixed(1)} ↦  ${time.toFixed(1)})`
+      );
       if (time < 0) time = 0;
       if (this.media.duration && this.media.duration < time) {
         time = this.media.duration;
@@ -179,26 +182,28 @@ class MediaReceiver {
 }
 
 class MediaSession {
-  sessionId: string | undefined;
+  sessionId: string;
   state: string;
   mediaTime: number = 0;
   mediaTimeAt: number;
   duration?: number;
   description?: string;
   constructor(m: MediaStatusMessage.Status) {
-    this.sessionId = m.mediaSessionId;
-    console.debug(`new MediaSession() [${this.sessionId}]`);
+    this.sessionId = m.mediaSessionId.toString();
     this.state = m.playerState;
-    console.debug(`MediaSession.state: ${this.state}`);
     this.mediaTime = m.currentTime ?? 0;
     this.mediaTimeAt = Date.now() / 1000;
-    console.debug(`MediaSession.mediaTime: ${this.mediaTime.toFixed(1)}`);
     this.duration = m.media?.duration;
-    console.debug(`MediaSession.duration: ${this.duration?.toFixed(1)}`);
+    info(
+      `⚡[${c(this.sessionId)}] ${this.mediaTime.toFixed(
+        1
+      )}s/${this.duration?.toFixed(1)}s ${c(this.state)}`
+    );
     if (m.media?.metadata) {
       const meta = m.media.metadata;
       this.description =
         meta.title ?? "" + meta.seriesTitle ?? "" + meta.subtitle ?? "";
+      notice(this.description);
     }
   }
 
@@ -218,12 +223,13 @@ class MediaSession {
     const now = Date.now() / 1000;
     const oldMediaTime = this.getMediaTime();
     if (m.playerState !== this.state) {
-      console.debug(`Media.state: ${this.state} ⇒ ${m.playerState}`);
+      info(`🗘 [${c(this.sessionId)}] ${c(this.state)} ⇒ ${c(m.playerState)}`);
       this.state = m.playerState;
     }
     if (m.currentTime !== undefined) {
-      console.debug(
-        `position ≈ ${m.currentTime.toFixed(1)}s ± ` +
+      info(
+        `🗘 [${c(this.sessionId)}] ` +
+          `${m.currentTime.toFixed(1)}s ± ` +
           Math.abs(oldMediaTime - m.currentTime).toFixed(2) +
           "s"
       );
@@ -238,6 +244,6 @@ class MediaSession {
   }
 
   close(): void {
-    console.debug(`Media.close() [${this.sessionId}]`);
+    info(`Media.close() [${c(this.sessionId)}]`);
   }
 }

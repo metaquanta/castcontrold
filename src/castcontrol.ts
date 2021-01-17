@@ -7,17 +7,16 @@ stdin.setRawMode(true);
 stdin.resume();
 stdin.setEncoding("utf8");
 
-const host = process.argv[1];
-const port = process.argv[2] ?? 8009;
-if(host === undefined) {
+const host = process.argv[2];
+const port = process.argv[3] ?? 8009;
+if (host === undefined) {
   console.error("No Chromecast provided");
 }
 const cc = await CastController.connect(host, port);
 
-let paused = false;
 stdin.on("data", function (key: string) {
-  // ctrl-c ( end of text )
-  if (key === "\u0003") {
+  // ctrl-c/ctrl-d
+  if (key === "\u0003" || key === "\u0004") {
     process.exit();
   }
   switch (key) {
@@ -34,9 +33,8 @@ stdin.on("data", function (key: string) {
       cc.rseek(-10);
       break;
     case " ":
-      if (paused) cc.resume();
-      else cc.pause();
-      paused = !paused;
+      if (cc.state === "PAUSED") cc.resume();
+      else if (cc.state === "PLAYING") cc.pause();
       break;
     case "s":
       cc.stop();
@@ -45,4 +43,3 @@ stdin.on("data", function (key: string) {
       console.log(cc.volume);
   }
 });
-
