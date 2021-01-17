@@ -33,6 +33,17 @@ A proper system tray widget is planned (at least for Linux). However, there is n
 
 **castcontrold** does not initiate playback. Try [Cast All The Things](https://github.com/skorokithakis/catt) or your phone.
 
+## Installation
+`yarn install`
+
+`yarn build`
+
+## Usage
+With avahi, run `bin/launch_castcontrold.sh`
+
+On other platforms, locate your chromecasts IP or hostname and run `build/castcontrold.js <address>`
+
+
 ¹ According to [Google's developer documentation](https://developers.google.com/cast/docs/reference/messages), all compliant relevant senders support `urn:x-cast:com.google.cast.media`.
 
 ² MUCH faster than `catt volumedown`.
