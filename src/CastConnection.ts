@@ -2,15 +2,15 @@ import { Client } from "castv2";
 import { EventEmitter } from "events";
 
 export namespace CastConnection {
-  export function open(address: string): Promise<Link> {
-    console.debug(`CastConnection.open("${address}")`);
+  export function open(host: string, port: number): Promise<Link> {
+    console.debug(`CastConnection.open("${host}")`);
     return new Promise((resolve, reject) => {
       const client = new Client();
       client.on("error", (error: string) => {
         console.error(`CastConnection.open() failed ${error}`);
         reject(error);
       });
-      client.connect(address, () => {
+      client.connect({ host, port }, () => {
         resolve(new _Link(client));
       });
     });

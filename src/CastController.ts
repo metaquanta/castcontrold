@@ -4,8 +4,11 @@ import { ReceiverStatusMessage, MediaStatusMessage } from "./CastMessage.js";
 import { CastConnection } from "./CastConnection.js";
 
 export namespace CastController {
-  export async function connect(host: string): Promise<CastController> {
-    return controller(await CastConnection.open(host));
+  export async function connect(
+    host: string,
+    port: number | string
+  ): Promise<CastController> {
+    return controller(await CastConnection.open(host, parseInt(`${port}`)));
   }
 }
 
@@ -216,25 +219,13 @@ class MediaSession {
     const oldMediaTime = this.getMediaTime();
     if (m.playerState !== this.state) {
       console.debug(`Media.state: ${this.state} ⇒ ${m.playerState}`);
-      if (m.currentTime === undefined) {
-        if (this.state === "PLAYING") {
-          const currentPos = now - this.mediaTimeAt + this.mediaTime;
-          console.debug(
-            `${this.mediaTime.toFixed(1)}s ⇒ ${currentPos.toFixed(1)}s (est.)`
-          );
-          this.mediaTime = currentPos;
-          this.mediaTimeAt = now;
-        }
-        if (m.playerState === "PLAYING") {
-          this.mediaTimeAt = now;
-        }
-      }
       this.state = m.playerState;
     }
     if (m.currentTime !== undefined) {
       console.debug(
-        `${oldMediaTime.toFixed(1)}s == ${m.currentTime.toFixed(1)}s +/- ` +
-          Math.abs(oldMediaTime - m.currentTime).toFixed(2)
+        `position ≈ ${m.currentTime.toFixed(1)}s ± ` +
+          Math.abs(oldMediaTime - m.currentTime).toFixed(2) +
+          "s"
       );
       this.mediaTime = m.currentTime;
       this.mediaTimeAt = now;
