@@ -1,70 +1,44 @@
 import { Client } from "castv2";
 import { EventEmitter } from "events";
-import { Message } from "./CastMessage.js";
 
 export namespace CastConnection {
-  export function open(address: string): Promise<CastConnection> {
+  export function open(address: string): Promise<Link> {
     console.debug(`CastConnection.open("${address}")`);
     return new Promise((resolve, reject) => {
       const client = new Client();
       client.on("error", (error: string) => {
-        console.error(`CastConnection.openConnection() failed ${error}`);
+        console.error(`CastConnection.open() failed ${error}`);
         reject(error);
       });
       client.connect(address, () => {
-        resolve(new _CastConnection(client));
+        resolve(new _Link(client));
       });
     });
   }
 
-  export type Channel = {
-    send(type: string, data?: Record<string, unknown>): number;
-    sendAndListen(
-      type: string,
-      data?: Record<string, unknown>
-    ): Promise<Message>;
-    onMessage(f: (m: Message) => void): void;
+  export type Link = {
+    close(): void;
+    openChannel(src: string, dest: string): CastConnection.Channel;
   };
 
-  export const mediaSender = "client-17558";
-  export const mediaNs = "urn:x-cast:com.google.cast.media";
+  export type Channel = {
+    send(ns: string, type: string, data?: Record<string, unknown>): number;
+    onMessage(f: (m: Record<string, unknown>) => void): void;
+    onMessageNs(ns: string, f: (m: Record<string, unknown>) => void): void;
+    onValidatedMessageNs<T extends Record<string, unknown>>(
+      ns: string,
+      f: (m: T) => void,
+      guard: (m: Record<string, unknown>) => m is T,
+      validator?: (m: T) => boolean
+    ): void;
+  };
 }
 
-export type CastConnection = {
-  openTpChannel(sender?: string, receiver?: string): CastConnection.Channel;
-  openReceiverChannel(): CastConnection.Channel;
-  openMediaChannel(receiver: string): CastConnection.Channel;
-  send(
-    src: string,
-    dest: string,
-    namespace: string,
-    type: string,
-    data?: Record<string, unknown>
-  ): number;
-  sendAndListen(
-    src: string,
-    dest: string,
-    namespace: string,
-    type: string,
-    data?: Record<string, unknown>
-  ): Promise<Message>;
-  close(): void;
-  openChannel(
-    src: string,
-    dest: string,
-    namespace: string
-  ): CastConnection.Channel;
-};
-
-class _CastConnection {
+class _Link {
   private heartbeat: NodeJS.Timeout;
-  private requestId: number = Math.floor(Math.random() * 10000);
-  private channels: Map<
-    string,
-    Map<string, Map<string, _Channel>>
-  > = new Map();
+  private requestId: number = 1;
+  private channels: Map<string, Map<string, _Channel>> = new Map();
   constructor(private client: Client) {
-    console.debug("CastConnection: connected");
     this.client.on("message", (src, dest, namespace, payload) =>
       this.parseMessage(src, dest, namespace, payload)
     );
@@ -76,33 +50,7 @@ class _CastConnection {
         "PING"
       );
     }, 5000);
-  }
-
-  openTpChannel(
-    sender = "sender-0",
-    receiver = "receiver-0"
-  ): CastConnection.Channel {
-    return this.openChannel(
-      sender,
-      receiver,
-      "urn:x-cast:com.google.cast.tp.connection"
-    );
-  }
-
-  openReceiverChannel(): CastConnection.Channel {
-    return this.openChannel(
-      "sender-0",
-      "receiver-0",
-      "urn:x-cast:com.google.cast.receiver"
-    );
-  }
-
-  openMediaChannel(receiver: string): CastConnection.Channel {
-    return this.openChannel(
-      CastConnection.mediaSender,
-      receiver,
-      CastConnection.mediaNs
-    );
+    console.debug("link up.");
   }
 
   parseMessage(
@@ -112,19 +60,14 @@ class _CastConnection {
     data: string
   ): void {
     const json = JSON.parse(data);
-    console.debug(
-      `[${dest}] ⟵  [${src}] (${namespace}): `,
-      json.type
-      //JSON.stringify(json, null, "  ")
-    );
+    console.debug(`[${dest}] ⟵  [${src}] (${namespace} <${json.type}>)`);
+    //console.debug(JSON.stringify(json, null, "  "));
     (dest === "*"
-      ? Array.from(this.channels.values()).map((v) =>
-          v.get(src)?.get(namespace)
-        )
-      : [this.channels.get(dest)?.get(src)?.get(namespace)]
+      ? Array.from(this.channels.get(src)?.values() ?? [])
+      : [this.channels.get(src)?.get(dest)]
     )
       .filter((v) => v !== undefined)
-      .forEach((channel) => channel?.consume(json));
+      .forEach((channel) => channel?.consume(namespace, json));
   }
 
   send(
@@ -135,42 +78,15 @@ class _CastConnection {
     data: Record<string, unknown> = {}
   ): number {
     if (type !== "PING")
-      console.debug(`[${src}] ⟶  [${dest}] (${namespace}): ${type}`, data.type);
+      console.debug(`[${src}] ⟶  [${dest}] (${namespace}) <${type}>`);
     const requestId = this.newRequestId();
     this.client.send(
       src,
       dest,
       namespace,
-      JSON.stringify({ type, requestId, data })
+      JSON.stringify({ type, requestId, ...data })
     );
     return requestId;
-  }
-
-  sendAndListen(
-    src: string,
-    dest: string,
-    namespace: string,
-    type: string,
-    data: Record<string, unknown> = {}
-  ): Promise<Message> {
-    const requestId = this.send(src, dest, namespace, type, data);
-    const receive = (
-      resolve: (msg: Message) => void,
-      reject: (msg: Message) => void
-    ) => {
-      this.client.once("message", (rsrc, rdest, rns, data: string) => {
-        const message = JSON.parse(data);
-        if (message.requestId === requestId) {
-          resolve(message);
-        } else if (src === rdest && dest === rsrc && namespace === rns) {
-          reject(message);
-        } else {
-          receive(resolve, reject);
-        }
-      });
-    };
-
-    return new Promise((resolve, reject) => receive(resolve, reject));
   }
 
   close(): void {
@@ -181,61 +97,60 @@ class _CastConnection {
     return this.requestId++;
   }
 
-  openChannel(
-    sender: string,
-    receiver: string,
-    namespace: string
-  ): CastConnection.Channel {
-    console.debug(`openChannel("${sender}", "${receiver}", "${namespace}")`);
-    if (!this.channels.has(sender)) this.channels.set(sender, new Map());
-    if (!this.channels.get(sender)?.has(receiver))
-      this.channels.get(sender)?.set(receiver, new Map());
-    if (!this.channels.get(sender)?.get(receiver)?.has(namespace)) {
-      console.debug(`opening ["${sender}", "${receiver}", "${namespace}"]`);
+  openChannel(sender: string, receiver: string): CastConnection.Channel {
+    if (!this.channels.has(receiver)) this.channels.set(receiver, new Map());
+    if (!this.channels.get(receiver)?.has(sender)) {
+      console.debug(`[${sender}] ⟷  [${receiver}]`);
       this.channels
-        .get(sender)
-        ?.get(receiver)
-        ?.set(namespace, new _Channel(this, sender, receiver, namespace));
+        .get(receiver)
+        ?.set(sender, new _Channel(this, sender, receiver));
     }
-    return this.channels
-      .get(sender)
-      ?.get(receiver)
-      ?.get(namespace) as CastConnection.Channel;
+    return this.channels.get(receiver)?.get(sender) as CastConnection.Channel;
   }
 }
 
 class _Channel extends EventEmitter {
   constructor(
-    private bus: CastConnection,
+    private link: _Link,
     private source: string,
-    private dest: string,
-    private namespace: string
+    private dest: string
   ) {
     super();
-  }
-
-  send(type: string, data: Record<string, unknown> = {}): number {
-    return this.bus.send(this.source, this.dest, this.namespace, type, data);
-  }
-
-  consume(message: Message): void {
-    this.emit("message", message);
-  }
-
-  onMessage(f: (m: Message) => void): void {
-    this.on("message", f);
-  }
-
-  sendAndListen(
-    type: string,
-    data: Record<string, unknown> = {}
-  ): Promise<Message> {
-    return this.bus.sendAndListen(
-      this.source,
-      this.dest,
-      this.namespace,
-      type,
-      data
+    link.send(
+      source,
+      dest,
+      "urn:x-cast:com.google.cast.tp.connection",
+      "CONNECT"
     );
+  }
+
+  send(ns: string, type: string, data: Record<string, unknown> = {}): number {
+    return this.link.send(this.source, this.dest, ns, type, data);
+  }
+
+  consume(ns: string, message: Record<string, unknown>): void {
+    this.emit("message", [ns, message]);
+  }
+
+  onMessage(f: (m: Record<string, unknown>) => void): void {
+    this.on("message", (tuple) => f(tuple[1]));
+  }
+
+  onMessageNs(ns: string, f: (m: Record<string, unknown>) => void): void {
+    this.on("message", (tuple) => {
+      if (ns === tuple[0]) f(tuple[1]);
+    });
+  }
+
+  onValidatedMessageNs<T extends Record<string, unknown>>(
+    ns: string,
+    f: (m: Record<string, unknown>) => void,
+    guard: (m: Record<string, unknown>) => m is T,
+    validator: (m: T) => boolean = (m: T) => true
+  ): void {
+    this.on("message", (tuple) => {
+      if (ns === tuple[0] && guard(tuple[1]) && validator(tuple[1]))
+        f(tuple[1]);
+    });
   }
 }

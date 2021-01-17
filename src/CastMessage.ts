@@ -1,31 +1,33 @@
-export type Message = MediaStatusMessage | ReceiverStatusMessage;
-
+// https://developers.google.com/cast/docs/reference/messages
 export namespace ReceiverStatusMessage {
-  export function is(message: Message): message is ReceiverStatusMessage {
+  export function is(
+    message: Record<string, unknown>
+  ): message is ReceiverStatusMessage {
     return message.type === "RECEIVER_STATUS";
   }
 
   export type Application = {
-    appId: string;
-    displayName: string;
+    appId: string; // CC1AD845, 233637DE, E8C28D3C
+    displayName: string; // Default Media Receiver, YouTube, Backdrop
     iconUrl: string;
     isIdleScreen: boolean;
     launchedFromCloud: boolean;
     namespaces: { name: string }[];
     sessionId: string;
     statusText: string;
-    transportId: string;
-    universalAppId: string;
+    transportId: string; // == sessionId
+    universalAppId: string; // == appId
   };
 }
 
+// urn:x-cast:com.google.cast.receiver
 export type ReceiverStatusMessage = {
   requestId?: number;
   type: "RECEIVER_STATUS";
   status: {
-    applications?: ReceiverStatusMessage.Application[];
+    applications?: [ReceiverStatusMessage.Application];
     //userEq: {};
-    volume: {
+    volume?: {
       controlType: "attenuation";
       level: number;
       muted: boolean;
@@ -35,7 +37,9 @@ export type ReceiverStatusMessage = {
 };
 
 export namespace MediaStatusMessage {
-  export function is(message: Message): message is MediaStatusMessage {
+  export function is(
+    message: Record<string, unknown>
+  ): message is MediaStatusMessage {
     return message.type === "MEDIA_STATUS";
   }
 
@@ -57,19 +61,21 @@ export namespace MediaStatusMessage {
       orderId: number;
     }[];
     customData: { playerState?: number };
-    idleReason?: "FINISHED";
+    idleReason?: "FINISHED" | "ERROR" | "CANCELLED" | "INTERRUPTED";
+    repeatMode?: "REPEAT_OFF";
   };
 
   export type Media = {
     contentId: string;
-    streamType?: "BUFFERED";
+    streamType?: "BUFFERED" | "NONE" | "LIVE";
     contentType: string;
     customData?: { listId?: string; currentIndex?: number };
     metadata?: {
-      metadataType: number;
-      title: string;
-      subtitle: string;
-      images: { url: string }[];
+      metadataType: number; // 0,1,2,3,4
+      title?: string;
+      seriesTitle?: string;
+      subtitle?: string;
+      images?: { url: string; height?: number; width?: number }[];
     };
     duration?: number;
     tracks?: {
@@ -83,9 +89,38 @@ export namespace MediaStatusMessage {
     breaks?: [];
   };
 }
-
+// urn:x-cast:com.google.cast.media
 export type MediaStatusMessage = {
   requestId?: number;
   type: "MEDIA_STATUS";
-  status: MediaStatusMessage.Status[];
+  status: [MediaStatusMessage.Status];
 };
+
+// urn:x-cast:com.google.cast.multizone
+export type DeviceUpdatedMessage = {
+  requestId?: number;
+  type: "DEVICE_UPDATED";
+  device: {
+    capabilities: number;
+    deviceId: string;
+    name: string;
+    volume: { level: number; muted: boolean };
+  };
+};
+
+// urn:x-cast:com.google.youtube.mdx
+export type MdxSessionStatusMessage = {
+  type: "mdxSessionStatus";
+  data: { screenId: string; deviceId: string };
+};
+
+/* namespaces:
+
+"urn:x-cast:com.google.cast.debugoverlay"
+"urn:x-cast:com.google.cast.cac"
+"urn:x-cast:com.google.cast.media"
+"urn:x-cast:com.google.youtube.mdx"
+"urn:x-cast:com.google.cast.sse"
+"urn:x-cast:com.google.cast.remotecontrol"
+
+*/
