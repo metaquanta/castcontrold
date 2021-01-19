@@ -1,6 +1,6 @@
 import { Client } from "castv2";
 import { EventEmitter } from "events";
-import { c, debug, error, info } from "./debug.js";
+import { c, debug, error, warning, info } from "./debug.js";
 
 export namespace CastConnection {
   export function open(host: string, port: number): Promise<Link> {
@@ -32,6 +32,7 @@ export namespace CastConnection {
       guard: (m: Record<string, unknown>) => m is T,
       validator?: (m: T) => boolean
     ): void;
+    close(): void;
   };
 }
 
@@ -45,6 +46,10 @@ class _Link {
     this.client.on("message", (src, dest, namespace, payload) =>
       this.parseMessage(src, dest, namespace, payload)
     );
+    this.client.on("close", () => {
+      warning("Connection lost.");
+      this.close();
+    });
     this.heartbeat = setInterval(() => {
       this.send(
         "sender-0",
@@ -97,8 +102,16 @@ class _Link {
     return requestId;
   }
 
-  close(): void {
-    clearInterval(this.heartbeat);
+  close(channel?: _Channel): void {
+    if (channel !== undefined) {
+      this.channels.get(channel.dest)?.delete(channel.source);
+    } else {
+      clearInterval(this.heartbeat);
+      this.client.close();
+      Array.from(this.channels.values()).map((m) =>
+        Array.from(m.keys()).forEach((k) => m.delete(k))
+      );
+    }
   }
 
   newRequestId(): number {
@@ -118,11 +131,7 @@ class _Link {
 }
 
 class _Channel extends EventEmitter {
-  constructor(
-    private link: _Link,
-    private source: string,
-    private dest: string
-  ) {
+  constructor(private link: _Link, public source: string, public dest: string) {
     super();
     link.send(
       source,
@@ -160,5 +169,9 @@ class _Channel extends EventEmitter {
       if (ns === tuple[0] && guard(tuple[1]) && validator(tuple[1]))
         f(tuple[1]);
     });
+  }
+
+  close() {
+    this.link.close(this);
   }
 }

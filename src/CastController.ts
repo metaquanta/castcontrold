@@ -178,7 +178,9 @@ class MediaReceiver {
     }
   }
 
-  close(): void {}
+  close(): void {
+    this.channel.close();
+  }
 }
 
 class MediaSession {
