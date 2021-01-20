@@ -143,7 +143,6 @@ class MediaReceiver {
       this.media?.update(m.status[0]);
     } else {
       this.mediaSessionId = m.status[0].mediaSessionId;
-      if (this.media !== undefined) this.media.close();
       this.media = new MediaSession(m.status[0]);
     }
   }
@@ -163,7 +162,7 @@ class MediaReceiver {
   seek(time: number): void {
     if (this.media) {
       debug(
-        `seek ${this.media.getMediaTime().toFixed(1)} ↦  ${time.toFixed(1)})`
+        `seek ${this.media.getMediaTime().toFixed(1)} ↦ ${time.toFixed(1)}`
       );
       if (time < 0) time = 0;
       if (this.media.duration && this.media.duration < time) {
@@ -186,23 +185,38 @@ class MediaReceiver {
 class MediaSession {
   sessionId: string;
   state: string;
-  mediaTime: number = 0;
-  mediaTimeAt: number;
+  mediaTime?: number;
+  mediaTimeAt?: number;
   duration?: number;
   description?: string;
   constructor(m: MediaStatusMessage.Status) {
     this.sessionId = m.mediaSessionId.toString();
     this.state = m.playerState;
-    this.mediaTime = m.currentTime ?? 0;
-    this.mediaTimeAt = Date.now() / 1000;
-    this.duration = m.media?.duration;
-    info(
-      `⚡[${c(this.sessionId)}] ${this.mediaTime.toFixed(
-        1
-      )}s/${this.duration?.toFixed(1)}s ${c(this.state)}`
-    );
-    if (m.media?.metadata) {
-      const meta = m.media.metadata;
+    if (m.media !== undefined) {
+      this.setMedia(m.media, m.currentTime ?? 0);
+    }
+    info(`⚡[${c(this.sessionId)}] ${c(this.state)}`);
+  }
+
+  setMedia(m: MediaStatusMessage.Media, currentTime?: number) {
+    if (currentTime !== undefined) {
+      this.duration = m.duration;
+      const now = Date.now() / 1000;
+      const durationStr = this.duration ? this.duration.toFixed(1) + "s" : "∞";
+      if (this.mediaTime !== undefined && this.mediaTimeAt !== undefined) {
+        debug(
+          `${this.mediaTime}s ⇒ ${currentTime.toFixed(1)}s (±${Math.abs(
+            this.getMediaTime() - currentTime
+          ).toFixed(1)}s)  / ${durationStr}`
+        );
+      } else {
+        debug(`${currentTime.toFixed(1)}s / ${durationStr}`);
+      }
+      this.mediaTime = currentTime;
+      this.mediaTimeAt = now;
+    }
+    if (m.metadata && this.description === undefined) {
+      const meta = m.metadata;
       this.description =
         meta.title ?? "" + meta.seriesTitle ?? "" + meta.subtitle ?? "";
       notice(this.description);
@@ -215,6 +229,8 @@ class MediaSession {
   }
 
   getMediaTime(): number {
+    if (this.mediaTime === undefined || this.mediaTimeAt === undefined)
+      return 0;
     if (this.state === "PLAYING") {
       const now = Date.now() / 1000;
       return now - this.mediaTimeAt + this.mediaTime;
@@ -222,30 +238,12 @@ class MediaSession {
   }
 
   update(m: MediaStatusMessage.Status): void {
-    const now = Date.now() / 1000;
-    const oldMediaTime = this.getMediaTime();
     if (m.playerState !== this.state) {
       info(`🗘 [${c(this.sessionId)}] ${c(this.state)} ⇒ ${c(m.playerState)}`);
       this.state = m.playerState;
     }
-    if (m.currentTime !== undefined) {
-      info(
-        `🗘 [${c(this.sessionId)}] ` +
-          `${m.currentTime.toFixed(1)}s ± ` +
-          Math.abs(oldMediaTime - m.currentTime).toFixed(2) +
-          "s"
-      );
-      this.mediaTime = m.currentTime;
-      this.mediaTimeAt = now;
+    if (m.media !== undefined) {
+      this.setMedia(m.media, m.currentTime);
     }
-    if (this.description === undefined && m.media?.metadata !== undefined) {
-      const meta = m.media.metadata;
-      this.description =
-        meta.title ?? "" + meta.seriesTitle ?? "" + meta.subtitle ?? "";
-    }
-  }
-
-  close(): void {
-    info(`Media.close() [${c(this.sessionId)}]`);
   }
 }
