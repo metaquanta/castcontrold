@@ -1,7 +1,7 @@
 #!/bin/env -S node
 
 import { ReceiverStatusMessage, MediaStatusMessage } from "./CastMessage.js";
-import { CastConnection } from "./CastConnection.js";
+import CastMessageLink from "./CastMessageLink.js";
 import { c, debug, notice, info } from "./debug.js";
 
 export namespace CastController {
@@ -9,7 +9,7 @@ export namespace CastController {
     host: string,
     port: number | string
   ): Promise<CastController> {
-    return controller(await CastConnection.open(host, parseInt(`${port}`)));
+    return controller(await CastMessageLink.open(host, parseInt(`${port}`)));
   }
 }
 
@@ -32,7 +32,7 @@ export type CastController = {
   };
 };
 
-function controller(conn: CastConnection.Link): CastController {
+function controller(conn: CastMessageLink): CastController {
   const root = new RootReceiver(conn);
   return {
     get volume() {
@@ -77,12 +77,12 @@ function controller(conn: CastConnection.Link): CastController {
 
 class RootReceiver {
   static ns = "urn:x-cast:com.google.cast.receiver";
-  private channel: CastConnection.Channel;
+  private channel: CastMessageLink.Channel;
   volume?: { level: number; stepInterval: number };
   private transportId?: string;
   private applicationDescription?: string;
   applicationReceiver?: MediaReceiver;
-  constructor(private connection: CastConnection.Link) {
+  constructor(private connection: CastMessageLink) {
     this.channel = this.connection.openChannel("sender-0", "receiver-0");
     this.channel.onValidatedMessageNs(
       RootReceiver.ns,
@@ -92,12 +92,12 @@ class RootReceiver {
     this.channel.send(RootReceiver.ns, "GET_STATUS");
   }
 
-  setVolume(v: number | undefined) {
-    if (v === undefined) return;
-    if (v < 0) v = 0;
-    if (v > 1) v = 1;
+  setVolume(level: number | undefined) {
+    if (level === undefined) return;
+    if (level < 0) level = 0;
+    if (level > 1) level = 1;
     this.channel.send(RootReceiver.ns, "SET_VOLUME", {
-      volume: { level: v }
+      volume: { level }
     });
   }
 
@@ -139,14 +139,14 @@ class RootReceiver {
 
 class MediaReceiver {
   static ns = "urn:x-cast:com.google.cast.media";
-  private channel: CastConnection.Channel;
+  private channel: CastMessageLink.Channel;
   private mediaSessionId?: number;
   state: string = "IDLE";
   private _position: number = 0;
   private _positionAt: number = 0;
   private media?: MediaStatusMessage.Media;
   private client_id = Math.round(Math.random() * 100000);
-  constructor(private connection: CastConnection.Link, receiver: string) {
+  constructor(private connection: CastMessageLink, receiver: string) {
     this.channel = this.connection.openChannel(
       `client-${this.client_id}`,
       receiver
