@@ -1,27 +1,27 @@
-export function error(s:string) {
+export function error(s: string) {
   console.error(color(9, s));
 }
 
-export function warning(s:string) {
+export function warning(s: string) {
   console.error(color(1, s));
 }
 
-export function debug(s:string) {
+export function debug(s: string) {
   console.debug(color(8, s));
 }
 
-export function notice(s:string) {
+export function notice(s: string) {
   console.debug(color(15, s));
 }
 
-export function info(s:string) {
+export function info(s: string) {
   console.log(s);
 }
 
 export function c(s: string): string {
-  if (s === undefined) return color(9, "undefined");
+  if (s === undefined) return color(9, s);
   let h =
-    (s
+    (s.toString()
       .split("")
       .map((c) => c.codePointAt(0))
       .reduce((a, b) => ((a ?? 0) + (b ?? 0)) % 10) ?? 0) + 2;

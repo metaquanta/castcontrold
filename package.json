@@ -6,7 +6,7 @@
   "license": "AGPL-3.0",
   "repository": "github:metaquanta/castcontrold",
   "engines": {
-    "node": ">= 14.15 <15"
+    "node": "15"
   },
   "type": "module",
   "scripts": {

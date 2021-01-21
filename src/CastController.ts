@@ -23,6 +23,7 @@ export type CastController = {
   pause(): void;
   seek(p: number): void;
   rseek(d: number): void;
+  status: string;
   state: "PLAYING" | "PAUSED" | "LOADING" | "IDLE";
   media?: {
     description: string;
@@ -32,7 +33,7 @@ export type CastController = {
 };
 
 function controller(conn: CastConnection.Link): CastController {
-  const root = new Root(conn);
+  const root = new RootReceiver(conn);
   return {
     get volume() {
       return root.volume?.level ?? 1;
@@ -49,16 +50,16 @@ function controller(conn: CastConnection.Link): CastController {
       }
     },
     stop: () => root.stop(),
-    resume: () => root.receiver?.play(),
-    pause: () => root.receiver?.pause(),
-    seek: (p) => root.receiver?.seek(p),
+    resume: () => root.applicationReceiver?.play(),
+    pause: () => root.applicationReceiver?.pause(),
+    seek: (p) => root.applicationReceiver?.seek(p),
     rseek(delta) {
-      const pos = root.receiver?.media?.getMediaTime();
+      const pos = root.applicationReceiver?.position;
       if (pos === undefined) return;
       this.seek(pos + delta);
     },
     get state() {
-      const state = root.receiver?.media?.state;
+      const state = root.applicationReceiver?.state;
       if (
         state === undefined ||
         state === "BUFFERING" ||
@@ -67,38 +68,42 @@ function controller(conn: CastConnection.Link): CastController {
         return "LOADING";
       }
       return state as "PLAYING" | "PAUSED" | "LOADING" | "IDLE";
+    },
+    get status() {
+      return root.status;
     }
   };
 }
 
-class Root {
+class RootReceiver {
   static ns = "urn:x-cast:com.google.cast.receiver";
   private channel: CastConnection.Channel;
   volume?: { level: number; stepInterval: number };
   private transportId?: string;
-  receiver?: MediaReceiver;
+  private applicationDescription?: string;
+  applicationReceiver?: MediaReceiver;
   constructor(private connection: CastConnection.Link) {
     this.channel = this.connection.openChannel("sender-0", "receiver-0");
     this.channel.onValidatedMessageNs(
-      Root.ns,
+      RootReceiver.ns,
       (m) => this.parseMessage(m),
       ReceiverStatusMessage.is
     );
-    this.channel.send(Root.ns, "GET_STATUS");
+    this.channel.send(RootReceiver.ns, "GET_STATUS");
   }
 
   setVolume(v: number | undefined) {
     if (v === undefined) return;
     if (v < 0) v = 0;
     if (v > 1) v = 1;
-    this.channel.send(Root.ns, "SET_VOLUME", {
+    this.channel.send(RootReceiver.ns, "SET_VOLUME", {
       volume: { level: v }
     });
   }
 
   stop() {
     if (this.transportId)
-      this.channel.send(Root.ns, "STOP", {
+      this.channel.send(RootReceiver.ns, "STOP", {
         sessionId: this.transportId
       });
   }
@@ -115,62 +120,114 @@ class Root {
           app.namespaces.findIndex((ns) => ns.name === MediaReceiver.ns) >= 0
       )[0];
     if (application === undefined) return;
-
+    this.applicationDescription = application.displayName;
     this.transportId = application.transportId;
-    if (this.receiver !== undefined) this.receiver.close();
-    this.receiver = new MediaReceiver(this.connection, this.transportId);
+    if (this.applicationReceiver !== undefined)
+      this.applicationReceiver.close();
+    this.applicationReceiver = new MediaReceiver(
+      this.connection,
+      this.transportId
+    );
+  }
+
+  get status() {
+    return `[${this.applicationDescription}] ${
+      this.applicationReceiver?.status ?? ""
+    } ( volume: ${Math.round((this.volume?.level ?? 0) * 100)} / 100 )`;
   }
 }
 
 class MediaReceiver {
   static ns = "urn:x-cast:com.google.cast.media";
   private channel: CastConnection.Channel;
-  private mediaSessionId?: string;
-  media?: MediaSession;
+  private mediaSessionId?: number;
+  state: string = "IDLE";
+  private _position: number = 0;
+  private _positionAt: number = 0;
+  private media?: MediaStatusMessage.Media;
+  private client_id = Math.round(Math.random() * 100000);
   constructor(private connection: CastConnection.Link, receiver: string) {
-    this.channel = this.connection.openChannel("client-17558", receiver);
+    this.channel = this.connection.openChannel(
+      `client-${this.client_id}`,
+      receiver
+    );
     this.channel.onValidatedMessageNs(
       MediaReceiver.ns,
-      (m) => this.parseMessage(m),
+      (m) => this.parseMessage(m.status[0]),
       MediaStatusMessage.is,
       (m) => m.status !== undefined && m.status.length === 1
     );
     this.channel.send(MediaReceiver.ns, "GET_STATUS");
   }
 
-  parseMessage(m: MediaStatusMessage): void {
-    if (this.mediaSessionId === m.status[0].mediaSessionId) {
-      this.media?.update(m.status[0]);
+  set position(pos: number) {
+    this._position = pos;
+    this._positionAt = Date.now() / 1000;
+  }
+
+  get position(): number {
+    if (this.state === "PLAYING") {
+      return Date.now() / 1000 - this._positionAt + this._position;
     } else {
-      this.mediaSessionId = m.status[0].mediaSessionId;
-      this.media = new MediaSession(m.status[0]);
+      return this._position;
+    }
+  }
+
+  parseMessage(m: MediaStatusMessage.Status): void {
+    //console.log(m);
+    this.mediaSessionId = m.mediaSessionId;
+    if (m.currentTime) {
+      if (this._position > 0) {
+        debug(
+          `${this.position.toFixed(1)}s ⇒ ${m.currentTime.toFixed(
+            1
+          )}s (±${Math.abs(this.position - m.currentTime).toFixed(1)}s)`
+        );
+      }
+      this.position = m.currentTime;
+    }
+    info(
+      `[${c(this.mediaSessionId.toString())}] ${c(this.state)} ⇒ ${c(
+        m.playerState
+      )}`
+    );
+    this.state = m.playerState;
+    if (m.media) {
+      if (
+        this.media === undefined ||
+        this.media.contentId !== m.media.contentId
+      ) {
+        this.media = m.media;
+      } else {
+        if (m.media.metadata) this.media.metadata = m.media.metadata;
+        if (m.media.duration) this.media.duration = m.media.duration;
+      }
+      notice(this.description);
     }
   }
 
   play(): void {
     this.channel.send(MediaReceiver.ns, "PLAY", {
-      mediaSessionId: this.media?.sessionId
+      mediaSessionId: this.mediaSessionId
     });
   }
 
   pause(): void {
     this.channel.send(MediaReceiver.ns, "PAUSE", {
-      mediaSessionId: this.media?.sessionId
+      mediaSessionId: this.mediaSessionId
     });
   }
 
   seek(time: number): void {
     if (this.media) {
-      debug(
-        `seek ${this.media.getMediaTime().toFixed(1)} ↦ ${time.toFixed(1)}`
-      );
+      debug(`seek ${this.position.toFixed(1)} ↦ ${time.toFixed(1)}`);
       if (time < 0) time = 0;
       if (this.media.duration && this.media.duration < time) {
         time = this.media.duration;
       }
-      this.media.setMediaTime(time);
+      this.position = time;
       this.channel.send(MediaReceiver.ns, "SEEK", {
-        mediaSessionId: this.media?.sessionId,
+        mediaSessionId: this.mediaSessionId,
         currentTime: time,
         resumeState: "PLAYBACK_UNCHANGED"
       });
@@ -180,70 +237,27 @@ class MediaReceiver {
   close(): void {
     this.channel.close();
   }
-}
 
-class MediaSession {
-  sessionId: string;
-  state: string;
-  mediaTime?: number;
-  mediaTimeAt?: number;
-  duration?: number;
-  description?: string;
-  constructor(m: MediaStatusMessage.Status) {
-    this.sessionId = m.mediaSessionId.toString();
-    this.state = m.playerState;
-    if (m.media !== undefined) {
-      this.setMedia(m.media, m.currentTime ?? 0);
+  get description(): string {
+    if (this.media?.metadata) {
+      return [
+        this.media.metadata.title,
+        this.media.metadata.seriesTitle,
+        this.media.metadata.subtitle
+      ]
+        .filter((v) => v !== undefined)
+        .join(" | ");
     }
-    info(`⚡[${c(this.sessionId)}] ${c(this.state)}`);
+    if (this.media) return this.media.contentId;
+    return "...";
   }
 
-  setMedia(m: MediaStatusMessage.Media, currentTime?: number) {
-    if (currentTime !== undefined) {
-      this.duration = m.duration;
-      const now = Date.now() / 1000;
-      const durationStr = this.duration ? this.duration.toFixed(1) + "s" : "∞";
-      if (this.mediaTime !== undefined && this.mediaTimeAt !== undefined) {
-        debug(
-          `${this.mediaTime}s ⇒ ${currentTime.toFixed(1)}s (±${Math.abs(
-            this.getMediaTime() - currentTime
-          ).toFixed(1)}s)  / ${durationStr}`
-        );
-      } else {
-        debug(`${currentTime.toFixed(1)}s / ${durationStr}`);
-      }
-      this.mediaTime = currentTime;
-      this.mediaTimeAt = now;
-    }
-    if (m.metadata && this.description === undefined) {
-      const meta = m.metadata;
-      this.description =
-        meta.title ?? "" + meta.seriesTitle ?? "" + meta.subtitle ?? "";
-      notice(this.description);
-    }
-  }
-
-  setMediaTime(pos: number): void {
-    this.mediaTime = pos;
-    this.mediaTimeAt = Date.now() / 1000;
-  }
-
-  getMediaTime(): number {
-    if (this.mediaTime === undefined || this.mediaTimeAt === undefined)
-      return 0;
-    if (this.state === "PLAYING") {
-      const now = Date.now() / 1000;
-      return now - this.mediaTimeAt + this.mediaTime;
-    } else return this.mediaTime;
-  }
-
-  update(m: MediaStatusMessage.Status): void {
-    if (m.playerState !== this.state) {
-      info(`🗘 [${c(this.sessionId)}] ${c(this.state)} ⇒ ${c(m.playerState)}`);
-      this.state = m.playerState;
-    }
-    if (m.media !== undefined) {
-      this.setMedia(m.media, m.currentTime);
-    }
+  get status(): string {
+    const durationStr = this.media?.duration
+      ? this.media?.duration.toFixed(1) + "s"
+      : "∞";
+    return `${c(this.state)}: ${this.description} - ${this.position.toFixed(
+      1
+    )}s / ${durationStr}`;
   }
 }

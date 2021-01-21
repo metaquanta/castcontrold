@@ -44,7 +44,7 @@ export namespace MediaStatusMessage {
   }
 
   export type Status = {
-    mediaSessionId: string;
+    mediaSessionId: number;
     playbackRate: number;
     playerState: "PAUSED" | "IDLE" | "BUFFERING" | "BUFFERED" | "PLAYING";
     currentTime?: number;
