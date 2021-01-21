@@ -103,4 +103,4 @@ if [ -z "$ip" ]; then
     echo "Found '$fn' at $ip"
 fi
 
-"${path}/build/castcontrol.js" $ip $port
+node "${path}/build/castcontrol.js" $ip $port

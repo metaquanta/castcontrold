@@ -13,9 +13,12 @@
     "build": "tsc",
     "build:watch": "tsc --watch --preserveWatchOutput",
     "lint": "eslint --ext=ts,js src",
-    "format": "prettier --write *"
+    "format": "prettier --write *",
+    "clean": "rm -rf build",
+    "assets": "./bin/build_proto.sh"
   },
   "dependencies": {
+    "protobufjs": "~6.10.2"
   },
   "devDependencies": {
     "@types/node": "^14.14.20",

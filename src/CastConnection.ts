@@ -1,5 +1,5 @@
 import { connect, TLSSocket } from "tls";
-import { extensions as proto } from "../build/cast_channel.proto.js";
+import { extensions as proto } from "./cast_channel.proto.js";
 import { debug } from "./debug.js";
 
 export type CastConnection = {
