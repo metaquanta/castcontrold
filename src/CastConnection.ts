@@ -1,6 +1,6 @@
 import { connect, TLSSocket } from "tls";
 import { extensions as proto } from "./cast_channel.proto.js";
-import { debug } from "./debug.js";
+import { debug, error } from "./debug.js";
 
 export type CastConnection = {
   onReceipt(
@@ -24,7 +24,7 @@ export namespace CastConnection {
   }
 }
 class CastClient {
-  constructor(private socket: TLSSocket) {}
+  constructor(private socket: TLSSocket) { }
 
   onReceipt(
     f: (src: string, dest: string, ns: string, data: string) => void
@@ -38,10 +38,35 @@ class CastClient {
         const m = proto.api.cast_channel.CastMessage.decode(packet);
         debug(
           `CastConnection.onReceipt(` +
-            `${m.sourceId}, ${m.destinationId}, ${m.namespace}, ${m.payloadUtf8})`
+          `${m.sourceId}, ${m.destinationId}, ${m.namespace}, ${m.payloadUtf8})`
         );
         f(m.sourceId, m.destinationId, m.namespace, m.payloadUtf8);
       }
+    });
+    this.socket.on("error", (e) => {
+      error(`CastConnection socket error: ${e.toString()}`);
+      this.socket.destroy();
+    });
+    this.socket.on("end", () => {
+      error(`CastConnection closed by remote.`);
+      this.socket.destroy();
+    });
+    this.socket.on("close", (e) => {
+      error(`CastConnection socket ` + `${e ? "transmission error" : "received close"}.`)
+      this.socket.destroy();
+      throw new Error("connection lost.");
+    });
+  }
+
+  onError(f: (error: string) => void) {
+    this.socket.on("error", (e) => {
+      f(e.toString())
+    });
+    this.socket.on("end", () => {
+      f("closed by remote");
+    });
+    this.socket.on("close", (e) => {
+      f(e ? "transmission error" : "closed")
     });
   }
 
@@ -51,9 +76,9 @@ class CastClient {
     namespace: string,
     payloadUtf8: string
   ): void {
-    debug(
-      `CastClient.send(${sourceId}, ${destinationId}, ${namespace}, ${payloadUtf8})`
-    );
+    // debug(
+    //   `CastClient.send(${sourceId}, ${destinationId}, ${namespace}, ${payloadUtf8})`
+    // );
     const buf = proto.api.cast_channel.CastMessage.encode({
       protocolVersion: 0,
       payloadType: 0,

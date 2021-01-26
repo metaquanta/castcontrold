@@ -26,7 +26,6 @@ stdin.on("data", function (key: string) {
   if (cp === undefined) return;
   if (cp >= 48 && cp <= 57) {
     seek = `${seek}${key}`;
-    console.log(seek);
   } else if (cp === 13 && seek !== "") {
     cc.seek(parseInt(seek));
     return;
